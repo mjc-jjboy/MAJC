@@ -1,107 +1,83 @@
-graph TD
-    %% 定义样式
-    classDef input fill:#f9f9f9,stroke:#333,stroke-width:2px;
-    classDef process fill:#e1f5fe,stroke:#0277bd,stroke-width:2px;
-    classDef algo fill:#fff9c4,stroke:#fbc02d,stroke-dasharray: 5 5;
-    classDef core fill:#ffebee,stroke:#c62828,stroke-width:4px;
-    classDef output fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px;
+flowchart TD
+    %% --- 样式定义 (配色方案：专业蓝/灰/绿) ---
+    classDef sensor fill:#e3f2fd,stroke:#1565c0,stroke-width:2px,rx:5,ry:5;
+    classDef process fill:#ffffff,stroke:#37474f,stroke-width:2px,rx:5,ry:5;
+    classDef algorithm fill:#fff3e0,stroke:#ef6c00,stroke-width:1px,stroke-dasharray: 5 5;
+    classDef core fill:#ffebee,stroke:#c62828,stroke-width:3px,rx:5,ry:5;
+    classDef output fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,rx:5,ry:5;
+    classDef storage fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px;
 
-    %% --- 输入层 ---
-    subgraph Sensors [0. 多源传感器输入]
+    %% --- 0. 传感器输入层 ---
+    subgraph Input ["0. 多源传感器输入"]
         direction LR
-        Cam[RGB/红外相机]:::input
-        LiDAR[激光雷达]:::input
-        IMU[惯性测量单元]:::input
+        Cam["📷 相机<br/>RGB / 红外 / 事件相机"]:::sensor
+        LiDAR["📡 激光雷达<br/>3D LiDAR"]:::sensor
+        IMU["🧭 IMU<br/>加速度计+陀螺仪"]:::sensor
     end
 
-    %% --- 第一阶段：预处理 ---
-    subgraph Phase1 [1. 自适应关键帧提取与硬核预处理]
+    %% --- 1. 预处理层 ---
+    subgraph Preproc ["1. 自适应预处理与数据清洗"]
         direction TB
-        
-        %% 同步
-        Sync[时间戳硬同步/软同步]:::process
-        
-        %% 图像增强分支
-        subgraph ImageProc [视觉抗烟雾增强]
-            Dehaze[去雾算法<br/>(Dark Channel Prior / AOD-Net)]:::algo
-            Contrast[直方图均衡化 CLAHE]:::algo
+        Sync["⏱️ 硬/软时间同步"]:::process
+        subgraph VisionPre ["视觉抗烟雾处理"]
+            Dehaze["去雾增强<br/>Dark Channel Prior / AOD-Net"]:::algorithm
+            Equali["对比度增强<br/>CLAHE"]:::algorithm
         end
-        
-        %% 关键帧策略
-        subgraph KeyframeStrategy [智能关键帧策略]
-            MotionCheck[视差/光流检测]:::algo
-            BlurCheck[图像模糊度检测]:::algo
-            Select[关键帧筛选]:::process
+        subgraph Keyframe ["智能关键帧筛选"]
+            BlurCheck["模糊度/熵检测"]:::algorithm
+            MotionCheck["视差/光流检测"]:::algorithm
+            KF_Select{"关键帧<br/>决策"}:::process
         end
-        
-        Cam --> Sync
-        LiDAR --> Sync
-        IMU --> Sync
-        
-        Sync --> Dehaze --> Contrast --> Select
-        Sync --> MotionCheck --> Select
     end
 
-    %% --- 第二阶段：前端里程计 ---
-    subgraph Phase2 [2. 紧耦合状态估计 (抗烟雾核心)]
+    %% --- 2. 前端里程计 ---
+    subgraph Frontend ["2. 紧耦合状态估计 (前端)"]
         direction TB
-        
-        %% 预积分
-        PreInt[IMU预积分<br/>(处理高频运动)]:::process
-        
-        %% 视觉前端
-        subgraph VisionFront [视觉前端]
-            FeatExt[特征提取<br/>(SuperPoint/ORB)]:::algo
-            FeatTrack[光流/特征匹配]:::algo
-        end
-        
-        %% 激光前端
-        subgraph LidarFront [激光前端]
-            PointProcess[点云去畸变]:::algo
-            ScanMatch[点云配准 NDT/ICP]:::algo
-        end
-        
-        %% 核心：退化检测与权重调整
-        DegradationCheck{{环境退化检测<br/>(烟雾浓度/特征点丢失率)}}:::core
-        
-        %% 因子图构建
-        FactorGraph[局部因子图构建]:::process
-        
-        Sync --> PreInt
-        Select --> FeatExt --> FeatTrack
-        Sync --> PointProcess --> ScanMatch
-        
-        FeatTrack --> DegradationCheck
-        ScanMatch --> DegradationCheck
-        
-        PreInt --> FactorGraph
-        DegradationCheck --"动态调整协方差"--> FactorGraph
+        PreInt["IMU 预积分"]:::process
+        FeatExt["特征提取<br/>SuperPoint / ORB"]:::process
+        FeatTrack["光流追踪 / 特征匹配"]:::process
+        Deskew["点云去畸变"]:::process
+        ScanMatch["点云配准<br/>NDT / ICP"]:::process
+        Degradation{{"⚠️ 退化检测与权重仲裁<br/>(抗烟雾核心)"}}:::core
+        LIO_VIO_Switch["因子图构建<br/>动态协方差调整"]:::process
     end
 
-    %% --- 第三阶段：后端优化与建图 ---
-    subgraph Phase3 [3. 增量式滑窗优化与稠密建图]
+    %% --- 3. 后端优化与建图 ---
+    subgraph Backend ["3. 滑窗优化与稠密建图"]
         direction TB
-        
-        %% 优化求解
-        BA[滑动窗口优化 (Sliding Window BA)]:::process
-        Marg[边缘化 (Marginalization)<br/>保留历史约束]:::algo
-        
-        %% 全局一致性
-        LoopClose[回环检测 (BoW / Scan Context)]:::process
-        PoseGraph[全局位姿图优化]:::process
-        
-        %% 建图
-        DenseMap[稠密重建 (TSDF/Octomap)]:::output
-        LocalMap[局部地图维护]:::process
-        
-        FactorGraph --> BA
-        BA --> Marg --> BA
-        BA --> LocalMap
-        BA --> LoopClose --> PoseGraph
-        PoseGraph --> DenseMap
+        SW_BA["📉 滑动窗口优化<br/>Sliding Window BA"]:::core
+        Marg["边缘化 Marginalization<br/>保留历史先验"]:::process
+        subgraph Loop ["全局一致性"]
+            LoopDet["回环检测<br/>BoW / ScanContext"]:::algorithm
+            PoseGraph["全局位姿图优化"]:::process
+        end
+        subgraph Mapping ["地图生成"]
+            LocalMap["局部特征地图"]:::storage
+            DenseRecon["🧱 稠密重建<br/>TSDF / Octomap"]:::output
+            CleanMap["静态地图优化<br/>(滤除烟雾噪点)"]:::output
+        end
     end
 
-    %% 连接各阶段
-    Sensors --> Phase1
-    Phase1 --> Phase2
-    Phase2 --> Phase3
+    %% --- 连接关系 ---
+    Input --> Sync
+    Sync --> Dehaze --> Equali --> KF_Select
+    Sync --> BlurCheck --> KF_Select
+    Sync --> MotionCheck --> KF_Select
+    Sync --> PreInt
+    Sync --> Deskew
+
+    KF_Select --"高质量帧"--> FeatExt --> FeatTrack
+    Deskew --> ScanMatch
+
+    FeatTrack --> Degradation
+    ScanMatch --> Degradation
+    PreInt --> Degradation
+
+    Degradation --"视觉失效: 降权\n激光/IMU: 升权"--> LIO_VIO_Switch
+    LIO_VIO_Switch --> SW_BA
+
+    SW_BA --> Marg --> SW_BA
+    SW_BA --> LocalMap
+    SW_BA --> LoopDet --> PoseGraph
+
+    PoseGraph --> DenseRecon --> CleanMap
